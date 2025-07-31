@@ -1,10 +1,10 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 import os
 import logging
 import ccxt
 import pandas as pd
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 from flask import Flask, request, jsonify
 from threading import Thread
 import requests
@@ -20,16 +20,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Telegram bot
+# PROPER INITIALIZATION (FIX FOR THE ERROR)
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+application = Application.builder().token(TELEGRAM_TOKEN).build()  # Correct modern initialization
 
 # ===== UPTIME MONITORING SETUP ===== #
 PING_URL = os.getenv('UPTIME_ROBOT_URL')
 PING_INTERVAL = 300  # 5 minutes
 
 def ping_server():
-    """Periodically ping the server to keep it awake"""
     while True:
         try:
             if PING_URL:
@@ -38,17 +37,6 @@ def ping_server():
         except Exception as e:
             logger.error(f"Ping failed: {e}")
         time.sleep(PING_INTERVAL)
-
-# ===== MODIFIED INITIALIZATION FOR RENDER ===== #
-async def run_bot():
-    """Run Telegram bot in webhook mode for Render"""
-    WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL')
-    
-    await application.bot.set_webhook(
-        url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
-        drop_pending_updates=True
-    )
-    logger.info(f"Bot running in webhook mode at {WEBHOOK_URL}")
 
 # ===== FLASK ENDPOINTS ===== #
 @app.route('/')
@@ -72,10 +60,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 application.add_handler(CommandHandler("start", start))
 
-# ===== RENDER-SPECIFIC LAUNCH ===== #
+# ===== LAUNCH ===== #
 if __name__ == '__main__':
-    # Start uptime monitoring thread
+    # Start uptime monitoring
     Thread(target=ping_server, daemon=True).start()
     
-    # Start the bot
-    application.run_polling()
+    # Check if running on Render
+    if os.getenv('RENDER'):
+        # Webhook configuration for Render
+        PORT = int(os.getenv('PORT', 5000))
+        WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL')
+        
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
+            secret_token=os.getenv('WEBHOOK_SECRET', '')
+        )
+    else:
+        # Local development with polling
+        application.run_polling()
