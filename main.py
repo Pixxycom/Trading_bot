@@ -1,10 +1,10 @@
-#!/usr/bin/env python3.9
+ #!/usr/bin/env python3
 import os
 import logging
 import ccxt
 import pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from flask import Flask, request, jsonify
 from threading import Thread
 import requests
@@ -22,12 +22,11 @@ logger = logging.getLogger(__name__)
 
 # Initialize Telegram bot
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
-dispatcher = updater.dispatcher
+application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # ===== UPTIME MONITORING SETUP ===== #
-PING_URL = os.getenv('UPTIME_ROBOT_URL')  # Set this in Render environment variables
-PING_INTERVAL = 300  # 5 minutes (matches Uptime Robot's minimum)
+PING_URL = os.getenv('UPTIME_ROBOT_URL')
+PING_INTERVAL = 300  # 5 minutes
 
 def ping_server():
     """Periodically ping the server to keep it awake"""
@@ -41,15 +40,13 @@ def ping_server():
         time.sleep(PING_INTERVAL)
 
 # ===== MODIFIED INITIALIZATION FOR RENDER ===== #
-def run_bot():
+async def run_bot():
     """Run Telegram bot in webhook mode for Render"""
-    WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL')  # Set your Render external URL in environment variables
+    WEBHOOK_URL = os.getenv('RENDER_EXTERNAL_URL')
     
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv('PORT', 10000)),
-        url_path=TELEGRAM_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"
+    await application.bot.set_webhook(
+        url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
+        drop_pending_updates=True
     )
     logger.info(f"Bot running in webhook mode at {WEBHOOK_URL}")
 
@@ -65,17 +62,15 @@ def ping():
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
     if request.method == "POST":
-        update = Update.de_json(request.get_json(), updater.bot)
-        dispatcher.process_update(update)
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        Thread(target=lambda: application.update_queue.put(update)).start()
     return jsonify(success=True)
 
 # ===== BOT COMMAND HANDLERS ===== #
-# Add your command handlers here (start, help, etc.)
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text('Welcome to the Trading Bot!')
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Welcome to the Trading Bot!')
 
-start_handler = CommandHandler('start', start)
-dispatcher.add_handler(start_handler)
+application.add_handler(CommandHandler("start", start))
 
 # ===== RENDER-SPECIFIC LAUNCH ===== #
 if __name__ == '__main__':
@@ -83,4 +78,4 @@ if __name__ == '__main__':
     Thread(target=ping_server, daemon=True).start()
     
     # Start the bot
-    run_bot()
+    application.run_polling()
